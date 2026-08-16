@@ -62,14 +62,15 @@ Streamline your revision with live AI summaries. Stream Markdown summaries of le
 ## 📦 Downloads & Installation
 
 > [!NOTE]
-> **Platform Support**: Muster currently supports **Windows 10 / 11 (64-bit)**. macOS is currently not supported (planned for a future release).
+> **Platform Support**: Muster supports **macOS (Apple Silicon M-Series, macOS 12.0+)** and **Windows 10 / 11 (64-bit)**.
 
 | Platform | Package Type | File | Status |
 | :--- | :--- | :--- | :--- |
+| **macOS** (Apple Silicon) | Disk Image (`.dmg`) | `Muster_0.1.0_aarch64.dmg` | ✅ Available |
+| **macOS** (Apple Silicon) | App Bundle (`.app`) | `Muster.app` | ✅ Available |
 | **Windows** (Recommended) | NSIS Installer | `Muster_0.1.0_x64-setup.exe` | ✅ Available |
 | **Windows** | Enterprise MSI | `Muster_0.1.0_x64_en-US.msi` | ✅ Available |
 | **Windows** | Standalone Executable | `muster.exe` | ✅ Available |
-| **macOS** | Apple Silicon / Intel | — | ⏳ Not currently supported |
 
 ---
 

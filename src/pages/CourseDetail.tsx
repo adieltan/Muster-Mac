@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Tabs } from "../components/ui/tabs";
 import { Skeleton } from "../components/ui/skeleton";
 import { MarkdownRenderer } from "../components/ui/MarkdownRenderer";
+import DOMPurify from 'dompurify';
 import { useAppStore } from "../stores/useAppStore";
 import { buildAiUrl, splitAiUrl } from "../services/aiUrl";
 import {
@@ -966,7 +967,7 @@ export function CourseDetail({ courseId, onBack }: CourseDetailProps) {
                             {hasContent ? (
                               <div
                                 className="cms-content text-sm text-muted-foreground"
-                                dangerouslySetInnerHTML={{ __html: s.contentHtml }}
+                                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(s.contentHtml) }}
                               />
                             ) : (
                               <p className="text-sm text-muted-foreground/70 flex items-center gap-1.5">
@@ -1024,7 +1025,7 @@ export function CourseDetail({ courseId, onBack }: CourseDetailProps) {
                                           {cell.trim() ? (
                                             <span
                                               className="schedule-cell-html"
-                                              dangerouslySetInnerHTML={{ __html: cell }}
+                                              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(cell) }}
                                             />
                                           ) : (
                                             <span className="text-muted-foreground/50">—</span>
@@ -1039,7 +1040,7 @@ export function CourseDetail({ courseId, onBack }: CourseDetailProps) {
                           ) : (
                             <div
                               className="cms-content text-sm text-muted-foreground"
-                              dangerouslySetInnerHTML={{ __html: it.contentHtml }}
+                              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(it.contentHtml) }}
                             />
                           )}
                         </CardContent>

@@ -29,6 +29,12 @@ pub struct AppState {
     close_to_tray: std::sync::atomic::AtomicBool,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         let auth = Arc::new(MoodleAuth::new());
@@ -112,8 +118,10 @@ async fn is_logged_in(state: State<'_, AppState>) -> Result<bool, String> {
 /// Fetch all enrolled courses
 #[tauri::command]
 async fn fetch_courses(state: State<'_, AppState>) -> Result<Vec<Course>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_courses().await
 }
 
@@ -123,8 +131,10 @@ async fn fetch_course_resources(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<Resource>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_resources(course_id).await
 }
 
@@ -134,8 +144,10 @@ async fn fetch_assignments(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<Assignment>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_assignments(course_id).await
 }
 
@@ -145,8 +157,10 @@ async fn fetch_announcements(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<Announcement>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_announcements(course_id).await
 }
 
@@ -157,8 +171,10 @@ async fn fetch_course_contacts(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<CourseContact>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_contacts(course_id).await
 }
 
@@ -168,8 +184,10 @@ async fn fetch_course_assessments(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<Assignment>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_assessments(course_id).await
 }
 
@@ -179,8 +197,10 @@ async fn fetch_course_unit_info(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<UnitInfo, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_unit_info(course_id).await
 }
 
@@ -190,8 +210,10 @@ async fn fetch_course_schedule(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Schedule, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_schedule(course_id).await
 }
 
@@ -202,8 +224,10 @@ async fn fetch_assignment_submission(
     assignment_id: u64,
     state: State<'_, AppState>,
 ) -> Result<SubmissionStatus, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_assignment_submission(course_id, assignment_id).await
 }
 
@@ -213,8 +237,10 @@ async fn fetch_course_recordings(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<Recording>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_recordings(course_id).await
 }
 
@@ -223,10 +249,12 @@ async fn fetch_course_recordings(
 async fn sync_all(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<(Vec<Course>, Vec<Resource>, Vec<Assignment>, Vec<Announcement>), String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
-    let progress: Option<std::sync::Arc<dyn Fn(usize, usize, &str) + Send + Sync>> =
+) -> Result<moodle::scraper::AllCourseData, String> {
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
+    let progress: moodle::scraper::ProgressCallback =
         Some(std::sync::Arc::new(move |done, total, phase| {
             let _ = app_handle.emit(
                 "sync-progress",
@@ -236,21 +264,48 @@ async fn sync_all(
     scraper.fetch_all_data(progress).await
 }
 
+/// Helper to resolve and validate the clear_downloads target directory.
+/// Rejects any path containing parent directory traversal components (`..`) and ensures that
+/// only genuine subdirectories strictly within the downloads directory (and not the downloads directory itself)
+/// can be targeted. Defaults to `<download_dir>/Muster` (or `./Muster`).
+fn resolve_clear_downloads_target_with_base(
+    save_path: &str,
+    dl_base: Option<&std::path::Path>,
+) -> std::path::PathBuf {
+    let dl_dir = dl_base
+        .map(|p| p.to_path_buf())
+        .or_else(dirs::download_dir);
+    let default_download = dl_dir
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("Muster");
+
+    let raw = std::path::PathBuf::from(save_path);
+    if raw.is_absolute() {
+        if raw.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            default_download
+        } else if let Some(dl) = dl_dir {
+            if raw.starts_with(&dl) && raw != dl {
+                raw
+            } else {
+                default_download
+            }
+        } else {
+            default_download
+        }
+    } else {
+        default_download
+    }
+}
+
 /// Remove all files inside the configured download folder (user-initiated, from the clear-data modal).
 #[tauri::command]
 async fn clear_downloads(save_path: String) -> Result<(), String> {
-    let raw = std::path::PathBuf::from(save_path);
-    let dir = if raw.is_absolute() {
-        raw
-    } else {
-        dirs::download_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("Muster")
-    };
-    if !dir.exists() {
+    let target_dir = resolve_clear_downloads_target_with_base(&save_path, None);
+    if !target_dir.exists() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    for entry in std::fs::read_dir(&target_dir).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_dir() {
             std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
@@ -269,16 +324,20 @@ async fn test_ai_connection(
     api_url: String,
     model: String,
 ) -> Result<serde_json::Value, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.test_ai_connection(&api_key, &api_url, &model).await
 }
 
 /// Get sync status (fetches live counts from Moodle)
 #[tauri::command]
 async fn get_sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
 
     let courses = scraper.fetch_courses().await?;
 
@@ -319,8 +378,10 @@ async fn download_file(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.download_file(&file_url, &save_path, Some(&app_handle)).await
 }
 
@@ -329,8 +390,10 @@ async fn download_file(
 async fn fetch_calendar_events(
     state: State<'_, AppState>,
 ) -> Result<Vec<CalendarEvent>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_calendar_events().await
 }
 
@@ -339,8 +402,10 @@ async fn fetch_calendar_events(
 async fn fetch_grade_overview(
     state: State<'_, AppState>,
 ) -> Result<Vec<GradeOverviewRow>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_grade_overview().await
 }
 
@@ -350,8 +415,10 @@ async fn fetch_course_quizzes(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<Quiz>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_quizzes(course_id).await
 }
 
@@ -361,8 +428,10 @@ async fn fetch_course_gradebook(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<Vec<GradeEntry>, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_gradebook(course_id).await
 }
 
@@ -372,8 +441,10 @@ async fn fetch_course_unit_dashboard(
     course_id: u64,
     state: State<'_, AppState>,
 ) -> Result<UnitDashboard, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
     scraper.fetch_course_unit_dashboard(course_id).await
 }
 
@@ -406,8 +477,10 @@ async fn generate_summary_stream(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
 
     let ai_guard = state.ai_config.lock().await;
     let key = api_key
@@ -438,25 +511,31 @@ async fn generate_summary(
     model: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let scraper_guard = state.scraper.lock().await;
-    let scraper = scraper_guard.as_ref().ok_or("Not logged in")?;
+    let scraper = {
+        let guard = state.scraper.lock().await;
+        guard.as_ref().cloned().ok_or("Not logged in")?
+    };
 
-    let ai_guard = state.ai_config.lock().await;
+    let (key, url, md) = {
+        let ai_guard = state.ai_config.lock().await;
 
-    let key = api_key
-        .filter(|k| !k.trim().is_empty())
-        .or_else(|| ai_guard.as_ref().map(|c| c.api_key.clone()))
-        .ok_or_else(|| "AI API Key is missing. Please configure it in Settings.".to_string())?;
+        let key = api_key
+            .filter(|k| !k.trim().is_empty())
+            .or_else(|| ai_guard.as_ref().map(|c| c.api_key.clone()))
+            .ok_or_else(|| "AI API Key is missing. Please configure it in Settings.".to_string())?;
 
-    let url = api_url
-        .filter(|u| !u.trim().is_empty())
-        .or_else(|| ai_guard.as_ref().map(|c| c.api_url.clone()))
-        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
+        let url = api_url
+            .filter(|u| !u.trim().is_empty())
+            .or_else(|| ai_guard.as_ref().map(|c| c.api_url.clone()))
+            .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
 
-    let md = model
-        .filter(|m| !m.trim().is_empty())
-        .or_else(|| ai_guard.as_ref().map(|c| c.model.clone()))
-        .unwrap_or_else(|| "gpt-4o-mini".to_string());
+        let md = model
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| ai_guard.as_ref().map(|c| c.model.clone()))
+            .unwrap_or_else(|| "gpt-4o-mini".to_string());
+
+        (key, url, md)
+    };
 
     scraper.generate_summary(&content, &key, &url, &md).await
 }
@@ -590,18 +669,7 @@ async fn start_sso_login_webview_inner(
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
     // Extract cookies on the UI thread (WebView2 requires main-thread access).
-    let (cookies_tx, cookies_rx) = std::sync::mpsc::channel::<Result<Vec<CookieData>, String>>();
-    let webview_for_extract = webview_window.clone();
-    webview_for_extract
-        .with_webview(move |pw| {
-            let result = moodle::webview_cookies::extract_moodle_cookies(&pw);
-            let _ = cookies_tx.send(result);
-        })
-        .map_err(|e| format!("Failed to access WebView for cookie extraction: {}", e))?;
-
-    let cookies = cookies_rx
-        .recv_timeout(std::time::Duration::from_secs(15))
-        .map_err(|e| format!("Cookie extraction timed out: {}", e))??;
+    let cookies = moodle::webview_cookies::extract_cookies_tauri(&webview_window).await?;
 
     let _ = webview_window.close();
 
@@ -610,8 +678,6 @@ async fn start_sso_login_webview_inner(
             "No valid session cookie was obtained after login. Please try logging in again.".to_string(),
         );
     }
-
-    println!("SSO WebView login: extracted {} cookies", cookies.len());
 
     // Hand the WebView cookies (incl. HttpOnly MoodleSession) to reqwest.
     let response = state.auth.login_with_cookies(cookies).await?;
@@ -669,7 +735,13 @@ async fn open_in_app_webview(
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
 
-    let webview_window = WebviewWindowBuilder::new(&app_handle, LABEL, WebviewUrl::External(parsed))
+    let initial_url = if cookies.is_empty() {
+        WebviewUrl::External(parsed.clone())
+    } else {
+        WebviewUrl::External(url::Url::parse("about:blank").unwrap())
+    };
+
+    let webview_window = WebviewWindowBuilder::new(&app_handle, LABEL, initial_url)
         .title(title.unwrap_or_else(|| "Muster".to_string()))
         // A notch smaller than the main window (1360x840), centered on top, so it reads like a
         // child window rather than another peer main window
@@ -679,12 +751,14 @@ async fn open_in_app_webview(
         .build()
         .map_err(|e| format!("Failed to open window: {}", e))?;
 
-    // Inject the MoodleSession and other cookies into WebView2 to allow login-free access
+    // Inject the MoodleSession and other cookies into WebView to allow login-free access
     if !cookies.is_empty() {
         let url_for_inject = url.clone();
         let _ = webview_window.with_webview(move |pw| {
             let _ = moodle::webview_cookies::inject_moodle_cookies(&pw, &cookies, &url_for_inject);
         });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let _ = webview_window.navigate(parsed);
     }
 
     Ok(())
@@ -938,4 +1012,70 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn test_resolve_clear_downloads_target_normal_subdir() {
+        let dl = Path::new("/mock/user/Downloads");
+        let input = "/mock/user/Downloads/Muster/FIT1045";
+        let resolved = resolve_clear_downloads_target_with_base(input, Some(dl));
+        assert_eq!(resolved, PathBuf::from("/mock/user/Downloads/Muster/FIT1045"));
+    }
+
+    #[test]
+    fn test_resolve_clear_downloads_target_default_when_empty_or_relative() {
+        let dl = Path::new("/mock/user/Downloads");
+        let default_expected = dl.join("Muster");
+
+        assert_eq!(resolve_clear_downloads_target_with_base("", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("relative/path", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("./local", Some(dl)), default_expected);
+    }
+
+    #[test]
+    fn test_resolve_clear_downloads_target_rejects_download_root() {
+        let dl = Path::new("/mock/user/Downloads");
+        let default_expected = dl.join("Muster");
+
+        // The download directory itself must never be wiped
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/.", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/./.", Some(dl)), default_expected);
+    }
+
+    #[test]
+    fn test_resolve_clear_downloads_target_rejects_path_traversal() {
+        let dl = Path::new("/mock/user/Downloads");
+        let default_expected = dl.join("Muster");
+
+        // Parent directory traversal variants
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/..", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/../", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/../Documents", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/../../etc/passwd", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/Muster/../..", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/Muster/../Secret", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads/Muster/sub/../../../etc", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("../../etc", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("Muster/..", Some(dl)), default_expected);
+    }
+
+    #[test]
+    fn test_resolve_clear_downloads_target_rejects_outside_paths() {
+        let dl = Path::new("/mock/user/Downloads");
+        let default_expected = dl.join("Muster");
+
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Documents", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/mock/user/Downloads_backup/Muster", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/etc/shadow", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("/", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("~", Some(dl)), default_expected);
+        assert_eq!(resolve_clear_downloads_target_with_base("~/Downloads", Some(dl)), default_expected);
+    }
 }

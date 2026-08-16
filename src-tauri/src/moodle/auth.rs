@@ -148,7 +148,7 @@ impl MoodleAuth {
             ("service", "moodle_mobile_app"),
         ];
 
-        println!("Attempting token-based login for: {}", username);
+
         
         let token_response = self
             .client
@@ -159,7 +159,7 @@ impl MoodleAuth {
             .map_err(|e| format!("Failed to fetch token: {}", e))?;
 
         let token_url = token_response.url().as_str().to_string();
-        println!("Token response URL: {}", token_url);
+
 
         // Check if redirected to SSO
         if token_url.contains("okta.com") || token_url.contains("accounts.google.com") || token_url.contains("microsoftonline.com") {
@@ -171,12 +171,12 @@ impl MoodleAuth {
             .await
             .map_err(|e| format!("Failed to read token response: {}", e))?;
 
-        println!("Token response: {}", token_text);
+
 
         // Try to parse as JSON (successful token response)
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&token_text) {
             if let Some(token) = json.get("token").and_then(|t| t.as_str()) {
-                println!("Got token: {}", token);
+
                 
                 // Save the token and return success
                 let session = SessionData {
@@ -224,7 +224,7 @@ impl MoodleAuth {
 
         // Check for redirects
         let final_url = login_page.url().as_str().to_string();
-        println!("Login page URL: {}", final_url);
+
         
         // If redirected to a different login page (SSO), handle accordingly
         if final_url.contains("okta.com") || final_url.contains("accounts.google.com") || final_url.contains("microsoftonline.com") {
@@ -339,11 +339,7 @@ impl MoodleAuth {
             .map_err(|e| format!("Failed to verify session: {}", e))?;
 
         let final_url = response.url().as_str().to_string();
-        let status = response.status();
-        println!(
-            "Cookie login verification: status={}, url={}",
-            status, final_url
-        );
+
 
         // If we were bounced to a login/SSO page, the session is no good.
         if is_logged_out_url(&final_url) {
@@ -380,7 +376,7 @@ impl MoodleAuth {
     /// using the WebView-based approach (start_sso_login_webview) which can
     /// share cookies with the app.
     pub async fn login_with_sso_callback(&self) -> Result<LoginResponse, String> {
-        println!("Attempting to establish session after SSO callback...");
+
         
         // Create a client with cookie store
         let cookie_store = Arc::new(reqwest::cookie::Jar::default());
@@ -402,7 +398,7 @@ impl MoodleAuth {
         let status = response.status();
         let final_url = response.url().as_str().to_string();
 
-        println!("SSO callback check - status: {}, url: {}", status, final_url);
+
 
         // Check if we got redirected to login page or SSO provider
         if final_url.contains("login") || final_url.contains("okta.com") || final_url.contains("accounts.google.com") || final_url.contains("microsoftonline.com") {
@@ -440,7 +436,7 @@ impl MoodleAuth {
                 .collect();
 
             if !cookies.is_empty() {
-                println!("Found {} cookies, establishing session...", cookies.len());
+
                 
                 // Create session with cookies
                 let session = SessionData {
@@ -463,15 +459,13 @@ impl MoodleAuth {
                     message: "Login successful".to_string(),
                     user: None,
                 });
-            } else {
-                println!("No cookies found in response");
             }
         }
 
         // If we get here, the SSO session couldn't be established
         // This is expected when using the system browser approach because
         // cookies are domain-specific and won't be shared with our Rust client
-        println!("Could not establish SSO session - cookies not available to Rust client");
+
         Ok(LoginResponse {
             success: false,
             message: "SSO session could not be established. The browser and app have separate cookie stores. \
@@ -734,14 +728,18 @@ impl MoodleAuth {
             if login_id != "student" {
                 format!("{}@student.monash.edu", login_id)
             } else {
-                // Total failure: dump the dashboard HTML to the project samples/
-                // directory so it can be inspected without manual file transfers.
-                let uid = user_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string());
-                let p = dump_auth_debug_html(&format!("debug_userinfo_fail_{}.html", uid), &html);
-                eprintln!(
-                    "[user-info] Could not parse an email from the dashboard or profile page; HTML saved to {}",
-                    p.display()
-                );
+                // Total failure: in debug mode dump the dashboard HTML to samples/
+                #[cfg(debug_assertions)]
+                {
+                    let uid = user_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string());
+                    let p = dump_auth_debug_html(&format!("debug_userinfo_fail_{}.html", uid), &html);
+                    if !p.as_os_str().is_empty() {
+                        eprintln!(
+                            "[user-info] Could not parse an email from the dashboard or profile page; HTML saved to {}",
+                            p.display()
+                        );
+                    }
+                }
                 "student@monash.edu".to_string()
             }
         });
@@ -777,14 +775,16 @@ impl MoodleAuth {
             .map_err(|e| format!("Failed to read profile page: {}", e))?;
         let result = parse_contact_from_profile(&html);
         if result.0.is_none() {
-            // On parse failure, dump to the project's samples/ so the real location where Monash
-            // exposes the email can be tracked down offline.
-            // (Note: this file contains your own profile page HTML, for local debugging only.)
-            let p = dump_auth_debug_html(&format!("debug_profile_fail_{}.html", user_id), &html);
-            eprintln!(
-                "[user-info] Could not parse an email from the profile page; raw HTML saved to {}",
-                p.display()
-            );
+            #[cfg(debug_assertions)]
+            {
+                let p = dump_auth_debug_html(&format!("debug_profile_fail_{}.html", user_id), &html);
+                if !p.as_os_str().is_empty() {
+                    eprintln!(
+                        "[user-info] Could not parse an email from the profile page; raw HTML saved to {}",
+                        p.display()
+                    );
+                }
+            }
         }
         Ok(result)
     }
@@ -821,7 +821,7 @@ impl MoodleAuth {
                     if let Some(m) = cap.get(1) {
                         let token = m.as_str().to_string();
                         if !token.is_empty() {
-                            println!("Found token with pattern: {}", pattern);
+
                             return Ok(token);
                         }
                     }
@@ -899,9 +899,19 @@ impl MoodleAuth {
         if !saved_to_keyring {
             if let Some(parent) = self.session_path.parent() {
                 let _ = fs::create_dir_all(parent);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+                }
             }
             fs::write(&self.session_path, &json)
                 .map_err(|e| format!("Failed to save session to local storage: {}", e))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&self.session_path, fs::Permissions::from_mode(0o600));
+            }
         } else if self.session_path.exists() {
             let _ = fs::remove_file(&self.session_path);
         }
@@ -1050,15 +1060,21 @@ fn mailto_url_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Dump raw HTML into the project `samples/` directory for offline debugging.
-/// Mirrors the pattern used by `scraper.rs` so the same folder is inspected
-/// (and the assistant can read it without the user manually sending files).
+/// Dump raw HTML into the project `samples/` directory for offline debugging (debug builds only).
 fn dump_auth_debug_html(filename: &str, html: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
-    let _ = fs::create_dir_all(&dir);
-    let path = dir.join(filename);
-    let _ = fs::write(&path, html);
-    path
+    #[cfg(debug_assertions)]
+    {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(filename);
+        let _ = fs::write(&path, html);
+        path
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (filename, html);
+        PathBuf::new()
+    }
 }
 
 /// Decode HTML entities in a (server-rendered) fragment:

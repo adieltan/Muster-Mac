@@ -158,7 +158,9 @@ export const useAppStore = create<AppState>()(
     set((state) => {
       // Only accumulate ids from the current list into the read set, so old ids already deleted on the backend don't grow without bound
       const currentIds = state.announcements.map((a) => a.id).filter((id) => id != null);
-      const merged = new Set([...state.readAnnouncementIds, ...currentIds]);
+      const currentIdSet = new Set(currentIds);
+      const prunedReadIds = state.readAnnouncementIds.filter((id) => currentIdSet.has(id));
+      const merged = new Set([...prunedReadIds, ...currentIds]);
       return { readAnnouncementIds: Array.from(merged) };
     }),
   setSyncStatus: (status) =>
@@ -239,18 +241,23 @@ export const useAppStore = create<AppState>()(
       // Rust-side keyring session, checked on startup by loadSavedSession(). Persisting the flag made
       // a fresh launch restore isLoggedIn:true and render the Dashboard against a long-dead session,
       // which then failed every backend command with "Not logged in".
-      partialize: (state) => ({
-        courses: state.courses,
-        assignments: state.assignments,
-        announcements: state.announcements,
-        readAnnouncementIds: state.readAnnouncementIds,
-        allResources: state.allResources,
-        courseResources: state.courseResources,
-        calendarEvents: state.calendarEvents,
-        gradeOverview: state.gradeOverview,
-        summaries: state.summaries,
-        settings: state.settings,
-      }),
+      // `aiApiKey` is explicitly excluded from localStorage persistence for security.
+      partialize: (state) => {
+        const { aiApiKey: _omitKey, ...safeSettings } = state.settings;
+        void _omitKey;
+        return {
+          courses: state.courses,
+          assignments: state.assignments,
+          announcements: state.announcements,
+          readAnnouncementIds: state.readAnnouncementIds,
+          allResources: state.allResources,
+          courseResources: state.courseResources,
+          calendarEvents: state.calendarEvents,
+          gradeOverview: state.gradeOverview,
+          summaries: state.summaries,
+          settings: safeSettings as AppSettings,
+        };
+      },
       // Users on older versions don't have the newly added settings fields (e.g. accentColor) in localStorage,
       // and zustand's default shallow merge would replace the whole settings object with the old one, leaving new fields undefined.
       // Merge settings explicitly here so new fields always get their default value.

@@ -6,6 +6,33 @@ interface MarkdownRendererProps {
 }
 
 /**
+ * Validate that a URL uses an approved safe scheme (http, https, mailto).
+ */
+function isSafeUrl(href: string): boolean {
+  try {
+    const parsed = new URL(href, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validate that a URL is a genuine Monash University HTTPS endpoint.
+ */
+function isMonashUrl(href: string): boolean {
+  try {
+    const parsed = new URL(href);
+    return (
+      parsed.protocol === "https:" &&
+      (parsed.hostname === "monash.edu" || parsed.hostname.endsWith(".monash.edu"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Format inline Markdown elements: **bold**, *italic*, `code`, [link](url), etc.
  */
 function renderInline(text: string): React.ReactNode[] {
@@ -53,32 +80,38 @@ function renderInline(text: string): React.ReactNode[] {
       const linkMatch = token.match(/\[([^\]]+)\]\(([^)]+)\)/);
       if (linkMatch) {
         const linkText = linkMatch[1];
-        const linkHref = linkMatch[2];
-        elements.push(
-          <a
-            key={key}
-            href={linkHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={async (e) => {
-              e.preventDefault();
-              if (linkHref.startsWith("https://") && linkHref.includes("monash.edu")) {
-                try {
-                  const { invoke } = await import("@tauri-apps/api/core");
-                  await invoke("open_in_app_webview", { url: linkHref, title: linkText || "Monash" });
-                  return;
-                } catch { /* Fall back to the external browser */ }
-              }
-              try {
-                const { openUrl } = await import("@tauri-apps/plugin-opener");
-                await openUrl(linkHref);
-              } catch { /* Silent */ }
-            }}
-            className="text-primary underline underline-offset-2 hover:opacity-80 transition-opacity cursor-pointer"
-          >
-            {linkText}
-          </a>
-        );
+        const linkHref = linkMatch[2].trim();
+        if (!isSafeUrl(linkHref)) {
+          elements.push(linkText);
+        } else {
+          elements.push(
+            <a
+              key={key}
+              href={linkHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (isMonashUrl(linkHref)) {
+                  try {
+                    const { invoke } = await import("@tauri-apps/api/core");
+                    await invoke("open_in_app_webview", { url: linkHref, title: linkText || "Monash" });
+                    return;
+                  } catch { /* Fall back to the external browser */ }
+                }
+                if (isSafeUrl(linkHref)) {
+                  try {
+                    const { openUrl } = await import("@tauri-apps/plugin-opener");
+                    await openUrl(linkHref);
+                  } catch { /* Silent */ }
+                }
+              }}
+              className="text-primary underline underline-offset-2 hover:opacity-80 transition-opacity cursor-pointer"
+            >
+              {linkText}
+            </a>
+          );
+        }
       } else {
         elements.push(token);
       }

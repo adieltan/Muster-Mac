@@ -96,19 +96,19 @@ impl RequestGate {
             .acquire()
             .await
             .expect("request gate semaphore is never closed");
-        {
+
+        let wait = {
             let mut last = self.last_request.lock().await;
             let now = Instant::now();
-            let since = now.duration_since(*last);
-            if since < self.min_interval {
-                let wait = self.min_interval - since;
-                drop(last);
-                tokio::time::sleep(wait).await;
-                *self.last_request.lock().await = Instant::now();
-            } else {
-                *last = now;
-            }
+            let next_allowed = (*last + self.min_interval).max(now);
+            *last = next_allowed;
+            next_allowed.saturating_duration_since(now)
+        };
+
+        if wait > Duration::ZERO {
+            tokio::time::sleep(wait).await;
         }
+
         RequestPermit { _permit: permit }
     }
 }
@@ -135,6 +135,30 @@ mod tests {
         let t2 = start.elapsed();
         assert!(t1 < Duration::from_millis(40), "first request should start immediately, took {:?}", t1);
         assert!(t2 >= Duration::from_millis(50), "second request should wait for the interval, took {:?}", t2);
+    }
+
+    #[tokio::test]
+    async fn paces_concurrent_requests() {
+        let gate = Arc::new(RequestGate::new(ThrottleConfig {
+            min_interval: Duration::from_millis(40),
+            max_concurrency: 5,
+        }));
+        let start = Instant::now();
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let g = gate.clone();
+            handles.push(tokio::spawn(async move {
+                let _p = g.acquire().await;
+                Instant::now()
+            }));
+        }
+        let mut times = Vec::new();
+        for h in handles {
+            times.push(h.await.unwrap());
+        }
+        let total_elapsed = start.elapsed();
+        // 3 requests with 40ms interval should take at least 80ms total
+        assert!(total_elapsed >= Duration::from_millis(70), "concurrent requests must be paced, took {:?}", total_elapsed);
     }
 
     #[tokio::test]

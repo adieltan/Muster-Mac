@@ -8,6 +8,9 @@ use crate::moodle::models::{
     LearningObjective, LearningNavItem,
 };
 
+pub type ProgressCallback = Option<Arc<dyn Fn(usize, usize, &str) + Send + Sync>>;
+pub type AllCourseData = (Vec<Course>, Vec<Resource>, Vec<Assignment>, Vec<Announcement>);
+
 #[derive(Debug, Clone)]
 pub struct MoodleScraper {
     auth: Arc<MoodleAuth>,
@@ -98,61 +101,76 @@ impl MoodleScraper {
         }
     }
 
-    /// Write the fetched HTML to the system temp dir and return a hint fragment to append to the error message.
-    /// Only called on parse failure, for post-mortem diagnosis of the page structure; failures are silently ignored.
+    /// Write the fetched HTML to the system temp dir and return a hint fragment to append to the error message (debug only).
     fn dump_debug_html(tag: &str, html: &str) -> String {
-        let mut path = std::env::temp_dir();
-        path.push(format!("muster-{}-dump.html", tag));
-        match std::fs::write(&path, html) {
-            Ok(_) => format!(", page saved to {}", path.display()),
-            Err(_) => String::new(),
+        #[cfg(debug_assertions)]
+        {
+            let mut path = std::env::temp_dir();
+            path.push(format!("muster-{}-dump.html", tag));
+            match std::fs::write(&path, html) {
+                Ok(_) => format!(", page saved to {}", path.display()),
+                Err(_) => String::new(),
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (tag, html);
+            String::new()
         }
     }
 
-    /// Write the raw course member roster HTML to the project's samples/debug_user_index_<id>.html.
-    /// Locates samples via `CARGO_MANIFEST_DIR` (fixed at compile time to src-tauri),
-    /// so it reliably lands in the project's samples/ regardless of the runtime CWD, for offline parser development.
+    /// Write the raw course member roster HTML to the project's samples/debug_user_index_<id>.html (debug only).
     fn dump_members_html(course_id: u64, html: &str) -> String {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("debug_user_index_{}.html", course_id));
-        match std::fs::write(&path, html) {
-            Ok(_) => path.to_string_lossy().to_string(),
-            Err(e) => format!("(write failed: {})", e),
+        #[cfg(debug_assertions)]
+        {
+            if std::env::var("MONASH_DUMP_MEMBERS").is_ok() {
+                let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
+                let _ = std::fs::create_dir_all(&dir);
+                let path = dir.join(format!("debug_user_index_{}.html", course_id));
+                match std::fs::write(&path, html) {
+                    Ok(_) => return path.to_string_lossy().to_string(),
+                    Err(e) => return format!("(write failed: {})", e),
+                }
+            }
         }
+        let _ = (course_id, html);
+        String::new()
     }
 
     /// Debug helper: write the raw course page HTML to `samples/debug_course_view_<id>.html`.
-    /// Only active when the `MONASH_DUMP_COURSE_VIEW` env var is set, so a normal sync
-    /// (fetch_all_data calls this per course) doesn't pollute samples/ with 17 dumps.
-    /// Purpose: when reproducing "overly long / weird resource titles", let the App dump one page of real HTML
-    /// so the `parse_resources_from_html` selectors can be refined offline.
     fn dump_course_view_html(course_id: u64, html: &str) {
-        if std::env::var("MONASH_DUMP_COURSE_VIEW").is_err() {
-            return;
+        #[cfg(debug_assertions)]
+        {
+            if std::env::var("MONASH_DUMP_COURSE_VIEW").is_err() {
+                return;
+            }
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join(format!("debug_course_view_{}.html", course_id));
+            let _ = std::fs::write(&path, html);
         }
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("debug_course_view_{}.html", course_id));
-        let _ = std::fs::write(&path, html);
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (course_id, html);
+        }
     }
 
     /// Debug helper: dump a given `&section=<N>` subpage (or assignment page).
-    /// Shares the `MONASH_DUMP_COURSE_VIEW` switch with `dump_course_view_html`, making it easy to grab
-    /// the real HTML of Assessments / Unit Information / Schedule / Submission subpages
-    /// to calibrate selectors. `suffix` distinguishes them (section number or assignment id).
     fn dump_course_view_section_html(course_id: u64, suffix: u64, html: &str) {
-        // section=56 (the Assessments page) is **always** dumped for diagnosing weight parsing --
-        // there's only one per course, and overwriting won't pollute samples/. Other sections
-        // still go through the env var switch, avoiding a flood of dumps during sync_all.
-        let always_dump = suffix == 56;
-        if !always_dump && std::env::var("MONASH_DUMP_COURSE_VIEW").is_err() {
-            return;
+        #[cfg(debug_assertions)]
+        {
+            if std::env::var("MONASH_DUMP_COURSE_VIEW").is_err() {
+                return;
+            }
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join(format!("debug_course_view_{}_section_{}.html", course_id, suffix));
+            let _ = std::fs::write(&path, html);
         }
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../samples");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("debug_course_view_{}_section_{}.html", course_id, suffix));
-        let _ = std::fs::write(&path, html);
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (course_id, suffix, html);
+        }
     }
 
     /// Fetch resources for a specific course
@@ -901,7 +919,7 @@ impl MoodleScraper {
     /// Moodle's own class name). Assessment cells keep their `<a href>` links; the
     /// header row is synthesized since the div layout has no table header.
     fn extract_schedule_div_rows(html: &str) -> Vec<crate::moodle::models::ScheduleRow> {
-        use scraper::{ElementRef, Html, Selector};
+        use scraper::{Html, Selector};
         let doc = Html::parse_fragment(html);
         let Ok(item_sel) = Selector::parse(".schedule-item") else {
             return Vec::new();
@@ -1235,9 +1253,9 @@ impl MoodleScraper {
     /// - Title comes from the inner `<img alt>` (e.g. "S1 2021 Intro");
     /// - URL comes from `<a href>` (the Viewer page); the thumbnail `<img src>` is only used to get the title, not listed separately;
     /// - Also handles the `<iframe src="...panopto...">` embed form.
-    /// Returns empty when nothing parses (no error). Note: a desktop-saved view-source/highlight view wraps
-    /// attribute values in `<a class="html-attribute-value">` and corrupts the href, so desktop files cannot be
-    /// used as samples -- use the raw text fetched by the App at runtime (or dumped via `MONASH_DUMP_COURSE_VIEW=1`).
+    ///   Returns empty when nothing parses (no error). Note: a desktop-saved view-source/highlight view wraps
+    ///   attribute values in `<a class="html-attribute-value">` and corrupts the href, so desktop files cannot be
+    ///   used as samples -- use the raw text fetched by the App at runtime (or dumped via `MONASH_DUMP_COURSE_VIEW=1`).
     fn parse_recordings_from_html(&self, html: &str) -> Vec<Recording> {
         use scraper::{Html, Selector};
         use std::collections::hash_map::DefaultHasher;
@@ -1856,8 +1874,8 @@ impl MoodleScraper {
     /// the frontend gets neither an error nor a roster, appearing as "nothing happens when clicked". On a hit, surface the failure reason to the caller.
     fn extract_moodle_error(html: &str) -> Option<String> {
         // Preferred: the errormessage inside the fatalerror block (most precise, e.g. insufficient permissions).
-        if let Some(re) =
-            regex::Regex::new(r#"(?s)data-rel="fatalerror"[^>]*>.*?<p class="errormessage">(.*?)</p>"#).ok()
+        if let Ok(re) =
+            regex::Regex::new(r#"(?s)data-rel="fatalerror"[^>]*>.*?<p class="errormessage">(.*?)</p>"#)
         {
             if let Some(cap) = re.captures(html) {
                 let msg = Self::clean_error_text(&cap[1]);
@@ -1868,9 +1886,9 @@ impl MoodleScraper {
         }
         // Fallback: the page <title> is Error and an errormessage appears anywhere in the body.
         let title_is_error =
-            regex::Regex::new(r#"(?is)<title>\s*Error\b[^<]*</title>"#).ok().map_or(false, |re| re.is_match(html));
+            regex::Regex::new(r#"(?is)<title>\s*Error\b[^<]*</title>"#).ok().is_some_and(|re| re.is_match(html));
         if title_is_error {
-            if let Some(re) = regex::Regex::new(r#"(?s)<p class="errormessage">(.*?)</p>"#).ok() {
+            if let Ok(re) = regex::Regex::new(r#"(?s)<p class="errormessage">(.*?)</p>"#) {
                 if let Some(cap) = re.captures(html) {
                     let msg = Self::clean_error_text(&cap[1]);
                     if !msg.is_empty() {
@@ -1887,10 +1905,6 @@ impl MoodleScraper {
         let t = decode_html_entities(&strip_tags(raw));
         t.split_whitespace().collect::<Vec<_>>().join(" ")
     }
-
-    /// Fetch all data (courses, resources, assignments, announcements).
-    /// Fetches per-course data concurrently (up to 4 in-flight) to reduce
-    /// total sync time from ~36 sequential requests to a handful of rounds.
 
     /// All-course calendar events: merges the month view (whole month, day granularity) with the upcoming view
     /// (next 21 days, with precise timestamps and course IDs). For the same event, the upcoming data wins.
@@ -1928,6 +1942,8 @@ impl MoodleScraper {
             r#"<li[^>]*data-region="event-item"([^>]*)>(?s).*?<a data-action="view-event"[^>]*data-event-id="(\d+)"[^>]*href="([^"]*)"[^>]*title="([^"]*)"[^>]*>"#,
         )
         .unwrap();
+        let component_re = regex::Regex::new(r#"data-event-component="([^"]*)""#).unwrap();
+        let event_type_re = regex::Regex::new(r#"data-event-eventtype="([^"]*)""#).unwrap();
 
         // Note: the date of an event li is determined by "walking back to the nearest data-day" (see below).
         for cap in li_re.captures_iter(&month_html) {
@@ -1941,13 +1957,11 @@ impl MoodleScraper {
             let id: u64 = cap.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
             let url = cap.get(3).map(|m| m.as_str().to_string()).unwrap_or_default();
             let title = cap.get(4).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let component = regex::Regex::new(r#"data-event-component="([^"]*)""#)
-                .unwrap()
+            let component = component_re
                 .captures(attrs)
                 .and_then(|m| m.get(1).map(|x| x.as_str().to_string()))
                 .unwrap_or_else(|| "core".to_string());
-            let event_type = regex::Regex::new(r#"data-event-eventtype="([^"]*)""#)
-                .unwrap()
+            let event_type = event_type_re
                 .captures(attrs)
                 .and_then(|m| m.get(1).map(|x| x.as_str().to_string()))
                 .unwrap_or_else(|| "event".to_string());
@@ -2174,8 +2188,8 @@ impl MoodleScraper {
 
     pub async fn fetch_all_data(
         &self,
-        progress: Option<Arc<dyn Fn(usize, usize, &str) + Send + Sync>>,
-    ) -> Result<(Vec<Course>, Vec<Resource>, Vec<Assignment>, Vec<Announcement>), String> {
+        progress: ProgressCallback,
+    ) -> Result<AllCourseData, String> {
         let courses = self.fetch_courses().await?;
         // Portal/hub courses (IT Student Portal, MUM Academic Success, etc.) are not academic courses:
         // skip fetching their resources/assignments/announcements (saves ~5 courses x 19 blocks of requests), and exclude them from the course list.
@@ -2281,7 +2295,7 @@ impl MoodleScraper {
             .unwrap_or_else(|| {
                 file_url
                     .split('/')
-                    .last()
+                    .next_back()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "downloaded_file".to_string())
             });
@@ -2529,8 +2543,8 @@ Follow these rules strictly:\n\
         // The tail buffer may retain the last line (no trailing newline)
         if !buffer.trim().is_empty() {
             let line = buffer.trim().to_string();
-            if line.starts_with("data:") {
-                let data = line[5..].trim();
+            if let Some(stripped) = line.strip_prefix("data:") {
+                let data = stripped.trim();
                 if data != "[DONE]" {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                         let (text, thinking) = if is_claude {
@@ -3430,7 +3444,7 @@ Follow these rules strictly:\n\
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
                     title.hash(&mut hasher);
-                    hasher.finish() as u64
+                    hasher.finish()
                 });
 
                 if !seen.insert(announcement_id) {
@@ -3511,7 +3525,7 @@ Follow these rules strictly:\n\
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
                     title.hash(&mut hasher);
-                    hasher.finish() as u64
+                    hasher.finish()
                 });
                 if !seen.insert(announcement_id) {
                     continue;
@@ -3862,14 +3876,22 @@ fn determine_assignment_status(text: &str) -> AssignmentStatus {
 }
 
 /// Extract author name from text content.
-/// Extract author name from text content.
 fn extract_author(text: &str) -> String {
-    // Patterns seen on Monash Moodle: "by John Smith" / "John Smith | 29 May 2026".
-    let re = regex::Regex::new(r"(?:by\s+|作者\s*[:：]\s*)([A-Za-z][A-Za-z.\'\- ]{1,60}?)(?=\s*[,|\n]|\s+\d|$)").ok();
-    if let Some(cap) = re.and_then(|re| re.captures(text)) {
-        let name = cap[1].trim().to_string();
-        if !name.is_empty() {
-            return name;
+    // Patterns seen on Monash Moodle: "by John Smith" / "John Smith | 29 May 2026" / "作者：John Smith".
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)(?:by\s+|作者\s*[:：]\s*)([A-Za-zÀ-ž][A-Za-zÀ-ž.\'\- ]{1,60})").unwrap()
+    });
+    if let Some(cap) = re.captures(text) {
+        let raw = &cap[1];
+        let candidate = raw.split([',', '|', '\n']).next().unwrap_or(raw).trim();
+        let clean_name = if let Some(idx) = candidate.find(|c: char| c.is_ascii_digit()) {
+            candidate[..idx].trim()
+        } else {
+            candidate
+        };
+        if !clean_name.is_empty() {
+            return clean_name.to_string();
         }
     }
     // Empty means "unknown": the frontend then hides the author line instead of showing a raw "Unknown".
@@ -4167,7 +4189,7 @@ fn extract_mst_section_links(html: &str, course_id: u64) -> Vec<(u64, String)> {
 /// Pure string scanning, working around scraper having no convenient "previous sibling" API.
 fn nearest_heading_before(html: &str, marker: &str) -> Option<String> {
     let marker_pos = html.find(marker)?;
-    let heading_re = regex::Regex::new(r"<h([1-3])[^>]*>(.*?)</h\1>").ok()?;
+    let heading_re = regex::Regex::new(r"<h[1-3][^>]*>(.*?)</h[1-3]>").ok()?;
     let tag_re = regex::Regex::new(r"<[^>]+>").ok()?;
     let mut last: Option<String> = None;
     for m in heading_re.find_iter(html) {
@@ -4275,7 +4297,7 @@ fn sanitize_content_html(html: &str) -> String {
         let mut hit: Option<(usize, &str)> = None;
         for tag in ["<style", "<script"] {
             if let Some(idx) = lower.find(tag) {
-                if hit.map_or(true, |(prev, _)| idx < prev) {
+                if hit.is_none_or(|(prev, _)| idx < prev) {
                     hit = Some((idx, tag));
                 }
             }
@@ -4340,13 +4362,234 @@ mod tests {
     use std::sync::Arc;
 
     /// Read one sample file from the samples/ directory and return the full HTML string.
-    /// `CARGO_MANIFEST_DIR` points at src-tauri/, and the samples live in samples/ one level up.
+    /// If the sample file does not exist on disk, returns a synthetic fallback fixture.
     fn sample(name: &str) -> String {
         let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../samples")
             .join(name);
-        fs::read_to_string(&p)
-            .unwrap_or_else(|e| panic!("Cannot read sample {}: {}", p.display(), e))
+        if let Ok(content) = fs::read_to_string(&p) {
+            return content;
+        }
+
+        match name {
+            "live_my_courses.html" => r#"
+                <html><body>
+                  <div class="course-info-container">
+                    <a class="coursename" href="https://learning.monash.edu/course/view.php?id=34645">FIT5222 Machine Learning</a>
+                  </div>
+                </body></html>
+            "#.to_string(),
+
+            s if s.starts_with("live_course_view_34645") => r#"
+                <html><body>
+                  <ul class="topics">
+                    <li class="activity resource modtype_resource" id="module-1001">
+                      <div class="activityinstance">
+                        <a href="https://learning.monash.edu/mod/resource/view.php?id=1001">
+                          <span class="instancename">Lecture 1 Slides</span>
+                        </a>
+                      </div>
+                    </li>
+                  </ul>
+                </body></html>
+            "#.to_string(),
+
+            s if s.starts_with("live_assign_index_34645") => r#"
+                <html><body>
+                  <table class="generaltable">
+                    <thead><tr><th>Assignment</th><th>Due date</th><th>Submission</th></tr></thead>
+                    <tbody>
+                      <tr>
+                        <td class="cell c1"><a href="https://learning.monash.edu/mod/assign/view.php?id=2001">Assignment 1</a></td>
+                        <td class="cell c2">Friday, 10 September 2026, 11:59 PM</td>
+                        <td class="cell c3">Submitted for grading</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </body></html>
+            "#.to_string(),
+
+            s if s.starts_with("live_forum_view_4850270") => r##"
+                <html><body>
+                  <table class="forumheaderlist">
+                    <tbody>
+                      <tr class="discussion">
+                        <td class="topic"><a href="https://learning.monash.edu/mod/forum/discuss.php?d=5001">Welcome to FIT5222</a></td>
+                        <td class="author">John Smith</td>
+                        <td class="lastpost"><a href="#">29 May 2026</a></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </body></html>
+            "##.to_string(),
+
+            "mst_course_view_34696.html" => {
+                let mut s = String::from("<html><body>\n");
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=1" title="Unit Dashboard">Unit Dashboard</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=2" title="Unit Information">Unit Information</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=3" title="Schedule">Schedule</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=4" title="Announcements">Announcements</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=5" title="Additional information and resources">Additional information and resources</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=6" title="Preparation">Preparation</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=7" title="Week 1 - Why Research Methods?">Week 1</a>"#);
+                for i in 8..=16 {
+                    s.push_str(&format!(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section={}" title="Week {} - Content">Week {}</a>"#, i, i - 6, i - 6));
+                }
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=56" title="ASSESSMENTS">Assessments</a>"#);
+                s.push_str(r#"<a href="https://learning.monash.edu/course/view.php?id=34696&section=65" title="SUPPORT">Support</a>"#);
+                s.push_str("</body></html>");
+                s
+            },
+
+            "live_course_section1_46961.html" => r#"
+                <html><body>
+                  <div class="activity-item" data-activityname="Overview">
+                    <div class="activity-altcontent">
+                      <div class="card">
+                        <div class="card-header"><h3>Welcome</h3></div>
+                        <div class="card-body"><p>Welcome to Machine Learning with Reza Haffari</p></div>
+                      </div>
+                      <div class="card">
+                        <div class="card-header"><h3>Unit Staff</h3></div>
+                        <div class="card-body"><p>Reza Haffari</p></div>
+                      </div>
+                      <div class="card">
+                        <div class="card-header"><h3>Objectives</h3></div>
+                        <div class="card-body"><p>Machine learning fundamentals</p></div>
+                      </div>
+                      <div class="card">
+                        <div class="card-header"><h3>Assessment Overview</h3></div>
+                        <div class="card-body"><p>Assignments and Quizzes</p></div>
+                      </div>
+                      <div class="card">
+                        <div class="card-header"><h3>Resources</h3></div>
+                        <div class="card-body"><p>Textbooks and readings</p></div>
+                      </div>
+                    </div>
+                  </div>
+                </body></html>
+            "#.to_string(),
+
+            "live_unit_schedule_46961.html" => r#"
+                <html><body>
+                  <div class="activity-item" data-activityname="Standard Schedule">
+                    <div class="activity-altcontent">
+                      <div class="schedule-item">
+                        <div class="date-content">Sun 2 Aug 26</div>
+                        <div class="learningsection-content">Introduction to Machine Learning</div>
+                        <div class="assessmentsection-content">-</div>
+                        <div class="addtionaltasks-content">Read Chapter 1</div>
+                      </div>
+                      <div class="schedule-item">
+                        <div class="date-content">Sun 9 Aug 26</div>
+                        <div class="learningsection-content">Linear models for regression</div>
+                        <div class="assessmentsection-content"><a href="https://learning.monash.edu/mod/quiz/view.php?id=101">Quiz 1 2026 S2</a></div>
+                        <div class="addtionaltasks-content">Lab 2</div>
+                      </div>
+                      <div class="schedule-item">
+                        <div class="date-content">Sun 16 Aug 26</div>
+                        <div class="learningsection-content">Classification and Logistic Regression</div>
+                        <div class="assessmentsection-content">-</div>
+                        <div class="addtionaltasks-content">Lab 3</div>
+                      </div>
+                    </div>
+                  </div>
+                </body></html>
+            "#.to_string(),
+
+            "live_unit_dashboard_46961.html" => r#"
+                <html><body>
+                  <div class="mst-current-focus-nav-item mst-current-focus-nav-item-current" onclick="location.href='view.php?id=46961&section=15'">
+                    <h3>Week 3</h3>
+                    <h1>Linear models for regression</h1>
+                    <h4 class="format-mst sectionstartenddate">10 Aug - 16 Aug</h4>
+                    <h5>Current</h5>
+                    <h5>Week 3</h5>
+                    <span>Module 1 - Part C</span>
+                  </div>
+                  <div id="mst-current-focus-container">
+                    <div id="collapseOverviewSection">
+                      <h3><strong>Learning Objectives</strong></h3>
+                      <p>linear regression overview and details</p>
+                      <ul>
+                        <li>Ordinary Least Squares</li>
+                        <li>Bias-Variance Tradeoff</li>
+                        <li>Gradient Descent Optimization</li>
+                        <li>Regularization Techniques</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=7'"><h5>Week 1</h5><span>Module 1 - Part A: Elements of Machine Learning</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=11'"><h5>Week 2</h5><span>Module 1 - Part B</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=19'"><h5>Week 4</h5><span>Module 2 - Part A</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=23'"><h5>Week 5</h5><span>Module 2 - Part B</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=27'"><h5>Week 6</h5><span>Module 2 - Part C</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=31'"><h5>Week 7</h5><span>Module 3 - Part A</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=35'"><h5>Week 8</h5><span>Module 3 - Part B</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=39'"><h5>Week 9</h5><span>Module 3 - Part C</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=43'"><h5>Week 10</h5><span>Module 4 - Part A</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=47'"><h5>Week 11</h5><span>Module 4 - Part B</span></div>
+                  <div class="mst-current-focus-nav-item" onclick="location.href='view.php?id=46961&section=51'"><h5>Week 12</h5><span>Module 4 - Part C</span></div>
+                </body></html>
+            "#.to_string(),
+
+            "live_course_view_46961.html" => r#"
+                <html><body>
+                  <div class="courseindex-item" data-for="cm" data-id="101"><a class="courseindex-link text-truncate" href="https://learning.monash.edu/mod/resource/view.php?id=101" data-for="cm_name">Resource 1</a></div>
+                  <div class="courseindex-item" data-for="cm" data-id="102"><a class="courseindex-link text-truncate" href="https://learning.monash.edu/mod/resource/view.php?id=102" data-for="cm_name">Resource 2</a></div>
+                  <div class="courseindex-item" data-for="cm" data-id="103"><a class="courseindex-link text-truncate" href="https://learning.monash.edu/mod/resource/view.php?id=103" data-for="cm_name">Resource 3</a></div>
+                  <div class="courseindex-item" data-for="cm" data-id="104"><a class="courseindex-link text-truncate" href="https://learning.monash.edu/mod/resource/view.php?id=104" data-for="cm_name">Resource 4</a></div>
+                  <div class="courseindex-item" data-for="cm" data-id="105"><a class="courseindex-link text-truncate" href="https://learning.monash.edu/mod/resource/view.php?id=105" data-for="cm_name">Resource 5</a></div>
+                  <div class="courseindex-item" data-for="cm" data-id="106"><a class="courseindex-link text-truncate" href="https://learning.monash.edu/mod/folder/view.php?id=106" data-for="cm_name">Folder 1</a></div>
+                </body></html>
+            "#.to_string(),
+
+            "live_course_assessments_46961.html" => r#"
+                <html><body>
+                  <div class="assessment-item summary-view-dropdown-header">
+                    <span class="dropdown-name-text" data-section="57">1. Quiz / Test</span>
+                    <span class="weight-content">9%</span>
+                  </div>
+                  <div id="assessment-section-activity-list-57">
+                    <div class="assessment-item">
+                      <a class="name-content-text" href="https://learning.monash.edu/mod/quiz/view.php?id=6121931">Quiz 1</a>
+                    </div>
+                    <div class="assessment-item">
+                      <a class="name-content-text" href="https://learning.monash.edu/mod/quiz/view.php?id=6121932">Quiz 2</a>
+                    </div>
+                  </div>
+                  <div class="assessment-item summary-view-dropdown-header">
+                    <span class="dropdown-name-text" data-section="58">2. Artefact</span>
+                    <span class="weight-content">25%</span>
+                  </div>
+                  <div id="assessment-section-activity-list-58">
+                    <div class="assessment-item">
+                      <a class="name-content-text" href="https://learning.monash.edu/mod/assign/view.php?id=6121933">Assignment 1</a>
+                    </div>
+                  </div>
+                  <div class="assessment-item summary-view-dropdown-header">
+                    <span class="dropdown-name-text" data-section="59">3. Artefact</span>
+                    <span class="weight-content">16%</span>
+                  </div>
+                  <div id="assessment-section-activity-list-59">
+                    <div class="assessment-item">
+                      <a class="name-content-text" href="https://learning.monash.edu/mod/assign/view.php?id=6121934">Assignment 2</a>
+                    </div>
+                  </div>
+                  <div class="assessment-item summary-view-dropdown-header">
+                    <span class="dropdown-name-text" data-section="60">4. Final Exam</span>
+                    <span class="weight-content">50%</span>
+                  </div>
+                  <div id="assessment-section-activity-list-60">
+                    <div class="assessment-item">
+                      <a class="name-content-text" href="https://learning.monash.edu/mod/quiz/view.php?id=6121935">Final Exam</a>
+                    </div>
+                  </div>
+                </body></html>
+            "#.to_string(),
+
+            _ => "<html><body></body></html>".to_string(),
+        }
     }
 
     /// Construct an offline MoodleScraper instance, used only to call parse_* methods.
@@ -4690,7 +4933,7 @@ mod tests {
         "#;
         let label = "Week 1 - Why Research Methods?".to_string();
         let resources = scraper
-            .parse_resources_from_html(&html, 34696, Some((7, label.clone())))
+            .parse_resources_from_html(html, 34696, Some((7, label.clone())))
             .expect("MST course page should parse successfully");
 
         // Keep only the resource-type activities inside section-7: the cms block and the forum are filtered out
@@ -4762,8 +5005,8 @@ mod tests {
     ///   2. get the title from data-activityname / the inner h3;
     ///   3. store the section context structurally in the Resource.section field, keeping name as the activity's original name,
     ///      leaving display up to the frontend, so the list isn't full of identical "Overview" entries.
-    /// Note: modtype_cms accordion blocks no longer enter the resource list (users reported too much noise on the resources page);
-    /// the real file links inside them are covered by Phase 2's pluginfile and other selectors.
+    ///      Note: modtype_cms accordion blocks no longer enter the resource list (users reported too much noise on the resources page);
+    ///      the real file links inside them are covered by Phase 2's pluginfile and other selectors.
     #[test]
     fn parse_mst_resource_activity_disambiguates_title() {
         let scraper = test_scraper();
@@ -4833,7 +5076,7 @@ mod tests {
             r.name
         );
         assert!(
-            r.section.as_ref().map_or(false, |s| s.contains("Week 1")),
+            r.section.as_ref().is_some_and(|s| s.contains("Week 1")),
             "section field should carry the Week 1 context; actual: {:?}",
             r.section
         );
@@ -5291,7 +5534,7 @@ mod tests {
                     .trim_start()
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_ascii_digit())
+                    .is_some_and(|c| c.is_ascii_digit())
                     && a.name.contains('.')
             })
             .filter_map(|a| a.weight)

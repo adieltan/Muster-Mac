@@ -9,9 +9,8 @@
 //! handing the cookies to `reqwest`.
 //!
 //! On Windows we use `ICoreWebView2CookieManager::GetCookies`, which returns
-//! HttpOnly cookies. On other platforms we fall back to `document.cookie`
-//! (which cannot see HttpOnly cookies and therefore cannot authenticate against
-//! Moodle) and surface a clear error.
+//! HttpOnly cookies. On macOS (Apple Silicon) we use `WKHTTPCookieStore::getAllCookies:`
+//! via WebKit Objective-C FFI. On other platforms we fall back with a descriptive error.
 
 use crate::moodle::auth::CookieData;
 
@@ -25,18 +24,51 @@ pub fn extract_moodle_cookies(
     {
         extract_cookies_webview2(webview)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = webview;
+        Err("Use extract_cookies_tauri() instead on macOS".to_string())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = webview;
         Err(
-            "WebView cookie extraction is only supported on Windows. \
+            "WebView cookie extraction is only supported on Windows and macOS. \
              Please use the manual Cookie login option instead."
                 .to_string(),
         )
     }
 }
 
-/// Inject session cookies into WebView2 so the user does not need to re-login in in-app webviews.
+/// Extract Moodle cookies from a WebviewWindow using Tauri's built-in cookies_for_url() API.
+/// This works on all platforms (Windows + macOS) and returns HttpOnly cookies.
+/// Available since Tauri 2.4+.
+pub async fn extract_cookies_tauri(
+    webview_window: &tauri::WebviewWindow,
+) -> Result<Vec<CookieData>, String> {
+    use url::Url;
+    let moodle_url = Url::parse("https://learning.monash.edu")
+        .map_err(|e| format!("Invalid URL: {}", e))?;
+    
+    let cookies = webview_window
+        .cookies_for_url(moodle_url)
+        .map_err(|e| format!("Failed to extract cookies: {}", e))?;
+    
+    let result: Vec<CookieData> = cookies
+        .into_iter()
+        .filter(|c| !c.name().is_empty())
+        .map(|c| CookieData {
+            name: c.name().to_string(),
+            value: c.value().to_string(),
+            domain: c.domain().map(|d| d.to_string()).unwrap_or_else(|| "learning.monash.edu".to_string()),
+            path: c.path().map(|p| p.to_string()).unwrap_or_else(|| "/".to_string()),
+        })
+        .collect();
+    
+    Ok(result)
+}
+
+/// Inject session cookies into WebView so the user does not need to re-login in in-app webviews.
 pub fn inject_moodle_cookies(
     webview: &tauri::webview::PlatformWebview,
     cookies: &[CookieData],
@@ -46,11 +78,88 @@ pub fn inject_moodle_cookies(
     {
         inject_cookies_webview2(webview, cookies, url)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        inject_cookies_wkwebview(webview, cookies, url)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (webview, cookies, url);
         Ok(())
     }
+}
+
+
+
+#[cfg(target_os = "macos")]
+fn inject_cookies_wkwebview(
+    webview: &tauri::webview::PlatformWebview,
+    cookies: &[CookieData],
+    _url: &str,
+) -> Result<(), String> {
+    use objc2::class;
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    unsafe {
+        let wk_ptr = webview.inner() as *mut AnyObject;
+        if wk_ptr.is_null() {
+            return Err("WKWebView pointer is null".to_string());
+        }
+
+        let config: *mut AnyObject = msg_send![wk_ptr, configuration];
+        if config.is_null() {
+            return Err("WKWebViewConfiguration is null".to_string());
+        }
+
+        let data_store: *mut AnyObject = msg_send![config, websiteDataStore];
+        if data_store.is_null() {
+            return Err("WKWebsiteDataStore is null".to_string());
+        }
+
+        let cookie_store: *mut AnyObject = msg_send![data_store, httpCookieStore];
+        if cookie_store.is_null() {
+            return Err("WKHTTPCookieStore is null".to_string());
+        }
+
+        let ns_cookie_class = class!(NSHTTPCookie);
+        let ns_string_class = class!(NSString);
+        let ns_dict_class = class!(NSDictionary);
+
+        let key_name: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: c"Name".as_ptr()];
+        let key_value: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: c"Value".as_ptr()];
+        let key_domain: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: c"Domain".as_ptr()];
+        let key_path: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: c"Path".as_ptr()];
+        let key_secure: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: c"Secure".as_ptr()];
+        let val_secure: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: c"TRUE".as_ptr()];
+
+        for c in cookies {
+            let val_name: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: std::ffi::CString::new(c.name.as_str()).unwrap_or_default().as_ptr()];
+            let val_val: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: std::ffi::CString::new(c.value.as_str()).unwrap_or_default().as_ptr()];
+            let val_domain: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: std::ffi::CString::new(c.domain.as_str()).unwrap_or_default().as_ptr()];
+            let val_path: *mut AnyObject = msg_send![ns_string_class, stringWithUTF8String: std::ffi::CString::new(c.path.as_str()).unwrap_or_default().as_ptr()];
+
+            let keys = [key_name, key_value, key_domain, key_path, key_secure];
+            let objects = [val_name, val_val, val_domain, val_path, val_secure];
+
+            let dict: *mut AnyObject = msg_send![
+                ns_dict_class,
+                dictionaryWithObjects: objects.as_ptr(),
+                forKeys: keys.as_ptr(),
+                count: keys.len()
+            ];
+
+            if !dict.is_null() {
+                let ns_cookie: *mut AnyObject = msg_send![ns_cookie_class, cookieWithProperties: dict];
+                if !ns_cookie.is_null() {
+                    let null_block: *mut AnyObject = std::ptr::null_mut();
+                    let _: () = msg_send![cookie_store, setCookie: ns_cookie, completionHandler: null_block];
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(windows)]

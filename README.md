@@ -75,13 +75,17 @@ All data stays on your machine. Authentication goes through Monash Okta SSO dire
 
 ## 🚀 Getting Started
 
-> **Note**: Muster currently supports **Windows 10 / 11 (64-bit)**. macOS is currently not supported (planned for a future release).
+> **Supported Platforms**: 
+> - **macOS (Apple Silicon M1 / M2 / M3 / M4)**: macOS Monterey (12.0) or later.
+> - **Windows 10 / 11 (64-bit)**.
 
-1. Download the latest installer (`Muster_0.1.0_x64-setup.exe`) from the [Releases](https://github.com/Poetrynan/Muster/releases) page.
+1. Download the latest installer for your system from the [Releases](https://github.com/Poetrynan/Muster/releases) page:
+   - **macOS**: `Muster_0.1.0_aarch64.dmg` (Apple Silicon M-Series)
+   - **Windows**: `Muster_0.1.0_x64-setup.exe`
 2. Launch the app and sign in with your Monash account (Okta SSO).
 3. Click **Sync with Moodle** — courses, assignments, resources and announcements will be fetched automatically.
 
-> For developers who want to build from source: see the project structure and run `npm install && npm run build && npx tauri build` (a Rust toolchain is required).
+> For developers who want to build from source on Mac: run `npm install && npm run build:mac` (Rust toolchain with `aarch64-apple-darwin` target required).
 
 ## 🔐 Data & Privacy
 

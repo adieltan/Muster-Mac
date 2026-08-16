@@ -41,6 +41,7 @@ async fn test_session_data_serialization_performance() {
 async fn test_offline_mode_resilience() {
     // When network request fails (e.g. invalid host / offline), reqwest returns Err(_).
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(std::time::Duration::from_millis(500))
         .build()
         .unwrap();
@@ -49,10 +50,7 @@ async fn test_offline_mode_resilience() {
     assert!(res.is_err(), "Expected connection error for unreachable host");
     
     // In auth.rs, error is handled as: Err(_) => true (retains session)
-    let is_valid = match res {
-        Ok(_) => false,
-        Err(_) => true, // Offline mode fallback
-    };
+    let is_valid = res.is_err();
     assert!(is_valid, "Offline mode must treat network failure as session valid");
 }
 
@@ -71,19 +69,30 @@ async fn test_expired_session_detection_with_mock_server() {
     });
 
     let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
 
     let resp = client.get(format!("http://{}", addr)).send().await.unwrap();
-    let final_url = resp.url().as_str().to_string();
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|l| l.to_str().ok())
+        .unwrap_or_default()
+        .to_lowercase();
+    let final_url = resp.url().as_str().to_lowercase();
     
-    let lower = final_url.to_lowercase();
-    let is_logged_out = lower.contains("/login")
-        || lower.contains("okta.com")
-        || lower.contains("accounts.google.com")
-        || lower.contains("microsoftonline.com")
-        || lower.contains("/signin");
+    let is_logged_out = location.contains("/login")
+        || location.contains("okta.com")
+        || location.contains("accounts.google.com")
+        || location.contains("microsoftonline.com")
+        || location.contains("/signin")
+        || final_url.contains("/login")
+        || final_url.contains("okta.com")
+        || final_url.contains("accounts.google.com")
+        || final_url.contains("microsoftonline.com")
+        || final_url.contains("/signin");
 
     assert!(is_logged_out, "Redirect to login URL must be detected as logged out");
 }
@@ -102,7 +111,10 @@ async fn test_valid_session_detection_with_mock_server() {
         }
     });
 
-    let client = reqwest::Client::builder().build().unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap();
 
     let resp = client.get(format!("http://{}", addr)).send().await.unwrap();
     let final_url = resp.url().as_str().to_string();
